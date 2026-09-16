@@ -1,0 +1,176 @@
+package com.internalmarketplace.api.post;
+
+import com.google.cloud.firestore.FieldValue;
+import com.internalmarketplace.api.category.CategoryRepository;
+import com.internalmarketplace.api.category.dto.CategoryResponse;
+import com.internalmarketplace.api.common.exception.ForbiddenException;
+import com.internalmarketplace.api.common.exception.NotFoundException;
+import com.internalmarketplace.api.common.exception.UnprocessableEntityException;
+import com.internalmarketplace.api.common.search.SearchKeywords;
+import com.internalmarketplace.api.common.web.PagedResponse;
+import com.internalmarketplace.api.post.dto.CreatePostRequest;
+import com.internalmarketplace.api.post.dto.PostImageResponse;
+import com.internalmarketplace.api.post.dto.PostResponse;
+import com.internalmarketplace.api.post.dto.UpdatePostRequest;
+import com.internalmarketplace.api.user.UserRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/** Business rules for posts, a direct port of post.service.js / post.controller.js. */
+@Service
+@RequiredArgsConstructor
+public class PostService {
+
+    private static final List<String> ALLOWED_IMAGE_TYPES = List.of("image/jpeg", "image/png", "image/webp");
+
+    private final PostRepository postRepository;
+    private final CategoryRepository categoryRepository;
+    private final StorageService storageService;
+    private final UserRepository userRepository;
+
+    public PagedResponse<PostResponse> listPosts(String categoryId, String status, String cursor, String query) {
+        String effectiveStatus = (status == null || status.isBlank()) ? "ACTIVE" : status;
+        List<String> searchTerms = (query == null || query.isBlank())
+                ? List.of()
+                : SearchKeywords.normalizeSearchQuery(query);
+
+        PostRepository.PagedResult result = postRepository.listPosts(categoryId, effectiveStatus, cursor, searchTerms);
+        List<PostResponse> withAuthors = withAuthors(result.items());
+        List<PostResponse> withImageUrls = withAuthors.stream()
+                .map(post -> post.coverImageKey() != null
+                        ? post.withImageUrl(storageService.signedReadUrl(post.coverImageKey()))
+                        : post)
+                .toList();
+        return new PagedResponse<>(withImageUrls, result.nextCursor());
+    }
+
+    public PostResponse getPost(String id) {
+        PostResponse found = postRepository.findById(id).orElseThrow(() -> new NotFoundException("Post not found"));
+        PostResponse post = userRepository.findSummaryById(found.userId())
+                .map(summary -> found.withAuthor(summary.email(), summary.name()))
+                .orElse(found);
+        List<PostImageResponse> images = postRepository.listImages(id).stream()
+                .map(image -> image.withUrl(storageService.signedReadUrl(image.objectKey())))
+                .toList();
+        return post.withImages(images);
+    }
+
+    private List<PostResponse> withAuthors(List<PostResponse> posts) {
+        Set<String> userIds = new LinkedHashSet<>();
+        for (PostResponse post : posts) {
+            userIds.add(post.userId());
+        }
+        Map<String, UserRepository.UserSummary> summaryByUid = new HashMap<>();
+        for (String uid : userIds) {
+            userRepository.findSummaryById(uid).ifPresent(summary -> summaryByUid.put(uid, summary));
+        }
+        return posts.stream()
+                .map(post -> {
+                    UserRepository.UserSummary summary = summaryByUid.get(post.userId());
+                    return summary != null ? post.withAuthor(summary.email(), summary.name()) : post;
+                })
+                .toList();
+    }
+
+    public String createPost(String userId, CreatePostRequest request) {
+        CategoryResponse category = categoryRepository.findById(request.categoryId()).orElse(null);
+        if (category == null || !"ACTIVE".equals(category.status())) {
+            throw new UnprocessableEntityException("Posts can only be created in an active category");
+        }
+
+        List<String> keywords = SearchKeywords.buildSearchKeywords(request.title(), request.description(), category.name());
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("category_id", request.categoryId());
+        data.put("user_id", userId);
+        data.put("title", request.title());
+        data.put("description", request.description());
+        data.put("post_type", request.postType().name());
+        data.put("price", request.price());
+        data.put("tags", request.tags());
+        data.put("expiry_date", request.expiryDate());
+        data.put("status", "ACTIVE");
+        data.put("search_keywords", keywords);
+        data.put("created_at", FieldValue.serverTimestamp());
+        data.put("updated_at", FieldValue.serverTimestamp());
+
+        return postRepository.create(data);
+    }
+
+    public void updatePostAsOwner(String id, String userId, UpdatePostRequest patch) {
+        PostResponse existing = requireOwnedPost(id, userId, "You can only edit your own posts");
+
+        Map<String, Object> update = new LinkedHashMap<>();
+        if (patch.title() != null) {
+            update.put("title", patch.title());
+        }
+        if (patch.description() != null) {
+            update.put("description", patch.description());
+        }
+        if (patch.price() != null) {
+            update.put("price", patch.price());
+        }
+        if (patch.status() != null) {
+            update.put("status", patch.status().name());
+        }
+
+        if (patch.title() != null || patch.description() != null) {
+            CategoryResponse category = categoryRepository.findById(existing.categoryId()).orElse(null);
+            update.put("search_keywords", SearchKeywords.buildSearchKeywords(
+                    patch.title() != null ? patch.title() : existing.title(),
+                    patch.description() != null ? patch.description() : existing.description(),
+                    category != null ? category.name() : null));
+        }
+
+        postRepository.update(id, update);
+    }
+
+    public void deletePostAsOwner(String id, String userId) {
+        requireOwnedPost(id, userId, "You can only delete your own posts");
+        postRepository.updateStatus(id, "REMOVED");
+    }
+
+    public UploadImageResult uploadPostImage(String postId, String userId, byte[] bytes, String contentType) {
+        if (!ALLOWED_IMAGE_TYPES.contains(contentType)) {
+            throw new com.internalmarketplace.api.common.exception.BadRequestException("Image must be JPEG, PNG, or WebP");
+        }
+        requireOwnedPost(postId, userId, "You can only add images to your own posts");
+
+        String objectKey = "posts/" + postId + "/" + Instant.now().toEpochMilli() + "-" + randomToken();
+        storageService.upload(objectKey, bytes, contentType);
+
+        Map<String, Object> imageData = new LinkedHashMap<>();
+        imageData.put("object_key", objectKey);
+        imageData.put("sort_order", 0);
+        imageData.put("metadata", Map.of("contentType", contentType));
+        imageData.put("created_at", FieldValue.serverTimestamp());
+        String imageId = postRepository.addImage(postId, imageData);
+
+        postRepository.setCoverImageKey(postId, objectKey);
+
+        return new UploadImageResult(imageId, storageService.signedReadUrl(objectKey));
+    }
+
+    private PostResponse requireOwnedPost(String id, String userId, String forbiddenMessage) {
+        PostResponse post = postRepository.findById(id).orElseThrow(() -> new NotFoundException("Post not found"));
+        if (!userId.equals(post.userId())) {
+            throw new ForbiddenException(forbiddenMessage);
+        }
+        return post;
+    }
+
+    private static String randomToken() {
+        return Long.toString((long) (Math.random() * Long.MAX_VALUE), 36);
+    }
+
+    public record UploadImageResult(String imageId, String url) {
+    }
+}

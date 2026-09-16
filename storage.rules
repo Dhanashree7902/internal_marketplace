@@ -1,0 +1,12 @@
+rules_version = '2';
+
+// Post images are uploaded via a backend-issued signed URL and read via
+// backend-issued download URLs, so direct client access is denied here.
+// The backend (Admin SDK) is not subject to these rules.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,57 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: internal-marketplace-api
+  threads:
+    virtual:
+      enabled: true
+  mvc:
+    throw-exception-if-no-handler-found: true
+  web:
+    resources:
+      add-mappings: false
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
+  jackson:
+    default-property-inclusion: non_null
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+
+app:
+  # Mirrors backend/.env's NODE_ENV usage: when not "production", auth failures include
+  # the underlying error message (see FirebaseAuthenticationFilter).
+  environment: ${NODE_ENV:development}
+  allowed-workspace-domain: ${ALLOWED_WORKSPACE_DOMAIN:}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:*}
+  rate-limit:
+    capacity: 30
+    refill-period-seconds: 60
+
+firebase:
+  project-id: ${GCLOUD_PROJECT:}
+  storage-bucket: ${FIREBASE_STORAGE_BUCKET:}
+  service-account-json: ${FIREBASE_SERVICE_ACCOUNT_JSON:}
+  auth-emulator-host: ${FIREBASE_AUTH_EMULATOR_HOST:}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
+
+logging:
+  level:
+    root: INFO
+    com.internalmarketplace.api: INFO

@@ -1,0 +1,19 @@
+{
+  "name": "internal-marketplace-functions",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Firestore-triggered Cloud Functions replacing the spec's message queue for notifications/search/audit",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "serve": "firebase emulators:start --only functions",
+    "deploy": "firebase deploy --only functions"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.3.1",
+    "firebase-functions": "^5.0.1"
+  }
+}
