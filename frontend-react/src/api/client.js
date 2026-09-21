@@ -1,6 +1,23 @@
 import { auth } from '../firebase.js';
 
-async function request(path, { method = 'GET', body } = {}) {
+// Requests already in flight, keyed by "METHOD path". A second call for the
+// same GET while the first hasn't resolved yet (e.g. React StrictMode's
+// double-invoked mount effects, or two components requesting the same data
+// in the same tick) reuses that in-flight promise instead of firing a second
+// network call. This does NOT cache resolved data -- once a request settles
+// it's removed from the map, so a later call at a different time still hits
+// the network. Persistent caching (for data like categories that rarely
+// change) belongs at the call-site/context level, not here -- see
+// CategoriesContext.
+const inFlightRequests = new Map();
+
+function logRequest(method, path, source) {
+  if (import.meta.env.DEV) {
+    console.debug(`[api] ${method} ${path}`, source ? `<- ${source}` : '');
+  }
+}
+
+async function performRequest(path, { method, body }) {
   const idToken = await auth?.currentUser?.getIdToken();
   const res = await fetch(`/api/v1${path}`, {
     method,
@@ -19,16 +36,39 @@ async function request(path, { method = 'GET', body } = {}) {
   return res.status === 204 ? null : res.json();
 }
 
+async function request(path, { method = 'GET', body, source } = {}) {
+  logRequest(method, path, source);
+
+  if (method !== 'GET') {
+    return performRequest(path, { method, body });
+  }
+
+  const dedupeKey = `${method} ${path}`;
+  const existing = inFlightRequests.get(dedupeKey);
+  if (existing) {
+    if (import.meta.env.DEV) {
+      console.debug(`[api] coalesced duplicate in-flight request: ${dedupeKey}`, source ? `<- ${source}` : '');
+    }
+    return existing;
+  }
+
+  const promise = performRequest(path, { method, body }).finally(() => {
+    inFlightRequests.delete(dedupeKey);
+  });
+  inFlightRequests.set(dedupeKey, promise);
+  return promise;
+}
+
 export const api = {
   me: () => request('/me'),
-  listCategories: () => request('/categories'),
+  listCategories: (source) => request('/categories', { source }),
   createCategory: (body) => request('/admin/categories', { method: 'POST', body }),
   updateCategory: (id, body) => request(`/admin/categories/${id}`, { method: 'PATCH', body }),
-  listPosts: (params = {}) => {
+  listPosts: (params = {}, source) => {
     const cleaned = Object.fromEntries(
       Object.entries(params).filter(([, value]) => value !== undefined && value !== null && value !== '')
     );
-    return request(`/posts?${new URLSearchParams(cleaned)}`);
+    return request(`/posts?${new URLSearchParams(cleaned)}`, { source });
   },
   getPost: (id) => request(`/posts/${id}`),
   createPost: (body) => request('/posts', { method: 'POST', body }),

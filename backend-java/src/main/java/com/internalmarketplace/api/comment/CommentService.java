@@ -7,7 +7,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -38,10 +37,9 @@ public class CommentService {
             return comments;
         }
 
-        Map<String, String> emailByUid = new HashMap<>();
-        for (String uid : missingUserIds) {
-            userRepository.findEmailById(uid).ifPresent(email -> emailByUid.put(uid, email));
-        }
+        // One combined round trip for every commenter missing an email instead of
+        // one sequential Firestore get per commenter (see UserRepository#findEmailsByIds).
+        Map<String, String> emailByUid = userRepository.findEmailsByIds(missingUserIds);
 
         return comments.stream()
                 .map(c -> c.userEmail() == null ? c.withUserEmail(emailByUid.get(c.userId())) : c)

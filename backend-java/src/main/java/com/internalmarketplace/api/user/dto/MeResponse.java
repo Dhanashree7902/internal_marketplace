@@ -10,7 +10,6 @@ public record MeResponse(
         String employeeId,
         String email,
         String name,
-        String department,
         String role,
         String status
 ) {

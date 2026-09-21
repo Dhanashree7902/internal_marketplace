@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
+import { useCategories } from '../context/CategoriesContext.jsx';
 import { Badge, Button, Card, formatDate, Panel, Textarea, Spinner, Modal, Field, Input } from '../components/ui.jsx';
 import {
   ArrowLeft,
@@ -19,8 +20,8 @@ import {
 export default function PostDetail() {
   const { postId } = useParams();
   const navigate = useNavigate();
+  const { categories } = useCategories();
   const [post, setPost] = useState(null);
-  const [categories, setCategories] = useState([]);
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -33,10 +34,9 @@ export default function PostDetail() {
   useEffect(() => {
     api.getPost(postId).then((res) => setPost(res.data));
     api.listComments(postId).then((res) => setComments(res.data));
-    api.listCategories().then((res) => setCategories(res.data));
   }, [postId]);
 
-  const category = categories.find((c) => c.id === post?.category_id);
+  const category = categories?.find((c) => c.id === post?.category_id);
 
   async function submitComment(e) {
     e.preventDefault();

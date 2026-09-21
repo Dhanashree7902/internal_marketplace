@@ -1,7 +1,9 @@
 package com.internalmarketplace.api.common.firestore;
 
 import com.google.api.core.ApiFuture;
+import com.google.api.core.ApiFutures;
 
+import java.util.List;
 import java.util.concurrent.ExecutionException;
 
 /**
@@ -25,5 +27,18 @@ public final class FirestoreSupport {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             throw new FirestoreOperationException(cause.getMessage(), cause);
         }
+    }
+
+    /**
+     * Blocks on a batch of independent Firestore futures at once instead of
+     * one at a time. Each {@link ApiFuture} is already in flight the moment
+     * it's created (the Firestore client issues the gRPC call immediately
+     * and hands back a future, it doesn't wait for a caller to block on it),
+     * so calling this on a list built with {@code collection().document(id).get()}
+     * per id turns N sequential round trips into one round trip whose latency
+     * is that of the slowest single lookup, not the sum of all of them.
+     */
+    public static <T> List<T> awaitAll(List<ApiFuture<T>> futures) {
+        return await(ApiFutures.allAsList(futures));
     }
 }

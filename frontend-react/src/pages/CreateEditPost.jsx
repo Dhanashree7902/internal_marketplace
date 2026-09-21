@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
+import { useCategories } from '../context/CategoriesContext.jsx';
 import { Badge, Button, Card, Field, Input, PageHeader, Panel, Select, Textarea } from '../components/ui.jsx';
 import { PlusCircle, Sparkles, Tag, DollarSign, Eye, AlertCircle } from 'lucide-react';
 
@@ -11,14 +12,10 @@ const POST_TYPES = [
 
 export default function CreateEditPost() {
   const navigate = useNavigate();
-  const [categories, setCategories] = useState([]);
+  const { categories } = useCategories();
   const [form, setForm] = useState({ categoryId: '', title: '', description: '', postType: 'SELL', price: '' });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
-
-  useEffect(() => {
-    api.listCategories().then((res) => setCategories(res.data));
-  }, []);
 
   async function submit(e) {
     e.preventDefault();
@@ -41,7 +38,7 @@ export default function CreateEditPost() {
     }
   }
 
-  const selectedCategoryName = categories.find((c) => c.id === form.categoryId)?.name || 'Category Name';
+  const selectedCategoryName = categories?.find((c) => c.id === form.categoryId)?.name || 'Category Name';
 
   return (
     <div className="space-y-6">
@@ -90,7 +87,7 @@ export default function CreateEditPost() {
                   <option value="" disabled>
                     Select a category
                   </option>
-                  {categories.map((c) => (
+                  {(categories || []).map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
                     </option>

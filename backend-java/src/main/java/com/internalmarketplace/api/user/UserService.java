@@ -41,17 +41,17 @@ public class UserService {
         EmployeeProfile target = userRepository.findProfileById(targetUid)
                 .orElseThrow(() -> new NotFoundException("User not found"));
 
-        if ("admin".equals(target.role())) {
-            throw new ConflictException("User is already an Admin");
-        }
+        boolean wasAdmin = "admin".equals(target.role());
         if (!"ACTIVE".equals(target.status())) {
             throw new ConflictException("Cannot promote an inactive user");
         }
 
-        userRepository.updateRole(targetUid, "admin");
+        if (!wasAdmin) {
+            userRepository.updateRole(targetUid, "admin");
 
-        String message = "You have been granted Admin access by " + actor.name() + ".";
-        notificationRepository.create(targetUid, "ADMIN_ROLE_ASSIGNED", targetUid, message);
+            String message = "You have been granted Admin access by " + actor.name() + ".";
+            notificationRepository.create(targetUid, "ADMIN_ROLE_ASSIGNED", targetUid, message);
+        }
 
         return target;
     }

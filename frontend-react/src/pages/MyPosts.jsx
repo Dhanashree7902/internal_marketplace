@@ -21,7 +21,7 @@ export default function MyPosts() {
     if (!profile) return;
     Promise.all(
       STATUSES.map(({ key }) =>
-        api.listPosts({ status: key }).then((res) => [key, res.data.filter((p) => p.user_id === profile.uid)])
+        api.listPosts({ status: key }, 'MyPosts').then((res) => [key, res.data.filter((p) => p.user_id === profile.uid)])
       )
     ).then((entries) => {
       setPostsByStatus(Object.fromEntries(entries));

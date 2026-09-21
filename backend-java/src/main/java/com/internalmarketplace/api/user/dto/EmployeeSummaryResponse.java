@@ -9,7 +9,6 @@ public record EmployeeSummaryResponse(
         String uid,
         String name,
         String email,
-        String employeeId,
-        String department
+        String employeeId
 ) {
 }

@@ -17,7 +17,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -68,10 +67,9 @@ public class PostService {
         for (PostResponse post : posts) {
             userIds.add(post.userId());
         }
-        Map<String, UserRepository.UserSummary> summaryByUid = new HashMap<>();
-        for (String uid : userIds) {
-            userRepository.findSummaryById(uid).ifPresent(summary -> summaryByUid.put(uid, summary));
-        }
+        // One combined round trip for every distinct author on the page instead of
+        // one sequential Firestore get per author (see UserRepository#findSummariesByIds).
+        Map<String, UserRepository.UserSummary> summaryByUid = userRepository.findSummariesByIds(userIds);
         return posts.stream()
                 .map(post -> {
                     UserRepository.UserSummary summary = summaryByUid.get(post.userId());

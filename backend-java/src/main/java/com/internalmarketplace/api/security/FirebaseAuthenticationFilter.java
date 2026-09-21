@@ -103,15 +103,24 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
                 // First-time sign-in from an allowed account (domain check above already
                 // passed): auto-provision as a plain employee instead of dead-ending on
                 // an admin having to hand-create this doc.
+                //
+                // employee_id is a mandatory, unique field on every users/{uid} record.
+                // There's no admin pre-provisioning step that supplies a real HR id before
+                // first login, so one is generated here from the Firebase uid instead of
+                // being left null. Uniqueness needs no separate check: it's derived 1:1
+                // from the uid, which is itself the document id, and userRef.create() below
+                // is atomic (fails with ALREADY_EXISTS instead of overwriting), so two
+                // concurrent first requests for the same account can't produce duplicates.
                 try {
+                    String employeeId = "EMP-" + decoded.getUid();
                     Map<String, Object> newUser = new LinkedHashMap<>();
                     newUser.put("email", decoded.getEmail());
                     newUser.put("name", decoded.getName() != null ? decoded.getName() : decoded.getEmail());
-                    newUser.put("employee_id", null);
-                    newUser.put("department", null);
+                    newUser.put("employee_id", employeeId);
                     newUser.put("role", "employee");
                     newUser.put("status", "ACTIVE");
                     newUser.put("created_at", FieldValue.serverTimestamp());
+                    newUser.put("updated_at", FieldValue.serverTimestamp());
                     FirestoreSupport.await(userRef.create(newUser));
                 } catch (FirestoreOperationException e) {
                     if (!e.isAlreadyExists()) {
@@ -144,7 +153,6 @@ public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
                     email,
                     name,
                     userDoc.getString("employee_id"),
-                    userDoc.getString("department"),
                     userDoc.getString("role"),
                     status);
 

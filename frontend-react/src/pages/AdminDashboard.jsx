@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useCategories } from '../context/CategoriesContext.jsx';
 import {
   Badge,
   Button,
@@ -37,8 +38,8 @@ import {
 
 export default function AdminDashboard() {
   const { profile } = useAuth();
+  const { categories, refresh: refreshCategories } = useCategories();
   const [requests, setRequests] = useState(null);
-  const [categories, setCategories] = useState(null);
   const [reports, setReports] = useState(null);
   const [newCategory, setNewCategory] = useState({ name: '', description: '' });
   const [creating, setCreating] = useState(false);
@@ -52,6 +53,7 @@ export default function AdminDashboard() {
   const [selectedCandidate, setSelectedCandidate] = useState(null);
   const [promoting, setPromoting] = useState(false);
   const [assignments, setAssignments] = useState(null);
+  const [assignmentsError, setAssignmentsError] = useState(null);
 
   const [removalRequests, setRemovalRequests] = useState(null);
   const [requestingRemoval, setRequestingRemoval] = useState(false);
@@ -61,16 +63,15 @@ export default function AdminDashboard() {
     api.listCategoryRequests().then((res) => setRequests(res.data));
   }
 
-  function refreshCategories() {
-    api.listCategories().then((res) => setCategories(res.data));
-  }
-
   function refreshReports() {
     api.listReports().then((res) => setReports(res.data));
   }
 
   function refreshAssignments() {
-    api.listRoleAssignments().then((res) => setAssignments(res.data));
+    setAssignmentsError(null);
+    api.listRoleAssignments()
+      .then((res) => setAssignments(res.data))
+      .catch((err) => setAssignmentsError(err.message));
   }
 
   function refreshRemovalRequests() {
@@ -78,7 +79,6 @@ export default function AdminDashboard() {
   }
 
   useEffect(refreshRequests, []);
-  useEffect(refreshCategories, []);
   useEffect(refreshReports, []);
   useEffect(refreshAssignments, []);
   useEffect(refreshRemovalRequests, []);
@@ -338,7 +338,6 @@ export default function AdminDashboard() {
                     <h4 className="text-sm font-bold text-slate-900 truncate">{c.name}</h4>
                     <p className="text-xs text-slate-500 truncate">
                       {c.email}
-                      {c.department && ` · ${c.department}`}
                     </p>
                   </div>
                   <Button size="sm" variant="primary" icon={UserPlus} onClick={() => setSelectedCandidate(c)}>
@@ -354,7 +353,13 @@ export default function AdminDashboard() {
           title="Recent Admin Assignments"
           description="Assigned By, Assigned To, and when the promotion happened."
         >
-          {assignments === null ? (
+          {assignmentsError ? (
+            <EmptyState
+              title="Couldn't load admin assignments"
+              description={assignmentsError}
+              icon={History}
+            />
+          ) : assignments === null ? (
             <div className="p-4">
               <SkeletonList />
             </div>

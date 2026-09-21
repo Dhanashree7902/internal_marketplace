@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
+import { useCategories } from '../context/CategoriesContext.jsx';
 import { Badge, Button, Card, EmptyState, formatDate, PageHeader, Panel, SectionHeading, SkeletonCard } from '../components/ui.jsx';
 import { SearchBar } from '../components/SearchBar.jsx';
 import {
@@ -45,7 +46,7 @@ function gradientFor(id) {
 }
 
 export default function Home() {
-  const [categories, setCategories] = useState(null);
+  const { categories } = useCategories();
   const [posts, setPosts] = useState(null);
   const [nextCursor, setNextCursor] = useState(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -55,16 +56,12 @@ export default function Home() {
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
 
   useEffect(() => {
-    api.listCategories().then((res) => setCategories(res.data));
-  }, []);
-
-  useEffect(() => {
     setPosts(null);
     const timer = setTimeout(() => {
       const params = { q: query.trim() };
       if (postTypeFilter !== 'ALL') params.postType = postTypeFilter;
       if (selectedCategory) params.categoryId = selectedCategory;
-      api.listPosts(params).then((res) => {
+      api.listPosts(params, 'Home').then((res) => {
         setPosts(res.data);
         setNextCursor(res.nextCursor);
       });
@@ -78,7 +75,7 @@ export default function Home() {
       const params = { q: query.trim(), cursor: nextCursor };
       if (postTypeFilter !== 'ALL') params.postType = postTypeFilter;
       if (selectedCategory) params.categoryId = selectedCategory;
-      const res = await api.listPosts(params);
+      const res = await api.listPosts(params, 'Home');
       setPosts((prev) => [...prev, ...res.data]);
       setNextCursor(res.nextCursor);
     } finally {
@@ -210,19 +207,14 @@ export default function Home() {
           <div className="flex flex-wrap items-center gap-3">
             {/* Post Type Segmented Control */}
             <div className="flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
-              {['ALL', 'SELL', 'RENT'].map((type) => (
-                <button
-                  key={type}
-                  onClick={() => setPostTypeFilter(type)}
-                  className={`rounded-lg px-3 py-1.5 transition-all cursor-pointer ${
-                    postTypeFilter === type
-                      ? 'bg-white text-slate-900 shadow-xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {type === 'ALL' ? 'All Types' : type}
-                </button>
-              ))}
+              <button
+                onClick={() => setPostTypeFilter('ALL')}
+                className={`rounded-lg px-3 py-1.5 transition-all cursor-pointer ${
+                  postTypeFilter === 'ALL' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All Types
+              </button>
             </div>
 
             {/* Grid / List View Switcher */}

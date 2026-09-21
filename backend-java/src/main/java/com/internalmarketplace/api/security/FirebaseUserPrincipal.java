@@ -12,7 +12,6 @@ public record FirebaseUserPrincipal(
         String email,
         String name,
         String employeeId,
-        String department,
         String role,
         String status
 ) {

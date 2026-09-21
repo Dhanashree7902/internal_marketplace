@@ -1,5 +1,6 @@
 package com.internalmarketplace.api.post;
 
+import com.google.api.core.ApiFuture;
 import com.google.cloud.firestore.CollectionReference;
 import com.google.cloud.firestore.DocumentReference;
 import com.google.cloud.firestore.DocumentSnapshot;
@@ -15,6 +16,8 @@ import com.internalmarketplace.api.post.dto.PostResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Repository;
 
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -59,6 +62,28 @@ public class PostRepository {
     public Optional<PostResponse> findById(String id) {
         DocumentSnapshot doc = FirestoreSupport.await(collection().document(id).get());
         return doc.exists() ? Optional.of(PostResponse.fromSnapshot(doc)) : Optional.empty();
+    }
+
+    /**
+     * Batch analogue of {@link #findById}: fires one Firestore get per id
+     * concurrently and blocks once on the combined result. Used where
+     * several unrelated posts need to be resolved for one response (e.g.
+     * report targets) instead of looping {@code findById}.
+     */
+    public Map<String, PostResponse> findByIds(Collection<String> ids) {
+        if (ids.isEmpty()) {
+            return Map.of();
+        }
+        List<ApiFuture<DocumentSnapshot>> futures = ids.stream()
+                .map(id -> collection().document(id).get())
+                .toList();
+        Map<String, PostResponse> postById = new HashMap<>();
+        for (DocumentSnapshot doc : FirestoreSupport.awaitAll(futures)) {
+            if (doc.exists()) {
+                postById.put(doc.getId(), PostResponse.fromSnapshot(doc));
+            }
+        }
+        return postById;
     }
 
     public List<PostImageResponse> listImages(String postId) {

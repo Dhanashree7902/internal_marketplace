@@ -8,6 +8,7 @@ import com.internalmarketplace.api.user.UserRepository.EmployeeProfile;
 import com.internalmarketplace.api.user.dto.EmployeeSummaryResponse;
 import com.internalmarketplace.api.user.dto.MeResponse;
 import com.internalmarketplace.api.user.dto.RoleAssignmentResponse;
+import com.internalmarketplace.api.roleremoval.RoleRemovalRequestRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -27,13 +28,13 @@ public class UserController {
 
     private final UserService userService;
     private final AuditService auditService;
+    private final RoleRemovalRequestRepository roleRemovalRequestRepository;
 
     // GET /api/v1/me
     @GetMapping("/me")
     public MeResponse getMe(@CurrentUser FirebaseUserPrincipal user) {
         return new MeResponse(
-                user.uid(), user.employeeId(), user.email(), user.name(), user.department(), user.role(),
-                user.status());
+                user.uid(), user.employeeId(), user.email(), user.name(), user.role(), user.status());
     }
 
     // GET /api/v1/admin/users?query=...
@@ -52,6 +53,13 @@ public class UserController {
                 "assignedByName", user.name(),
                 "assignedToName", target.name(),
                 "assignedToEmail", target.email()));
+
+        // Create a pending role-removal request record to surface in the Admin UI.
+        try {
+            roleRemovalRequestRepository.create(target.uid(), target.name(), target.email());
+        } catch (Exception ignored) {
+            // Non-fatal: ignore repository failures when backfilling.
+        }
 
         return ResponseEntity.noContent().build();
     }

@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
+import { useCategories } from '../context/CategoriesContext.jsx';
 import { Badge, Button, EmptyState, formatDate, PageHeader, Panel, SkeletonCard } from '../components/ui.jsx';
 import { SearchBar } from '../components/SearchBar.jsx';
 import { ChevronRight, Grid, List, Tag, ArrowLeft, Folder, PlusCircle } from 'lucide-react';
 
 export default function CategoryPage() {
   const { categoryId } = useParams();
-  const [category, setCategory] = useState(null);
+  const { categories } = useCategories();
+  const category = categories?.find((c) => c.id === categoryId) || null;
   const [posts, setPosts] = useState(null);
   const [nextCursor, setNextCursor] = useState(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -15,13 +17,9 @@ export default function CategoryPage() {
   const [viewMode, setViewMode] = useState('grid');
 
   useEffect(() => {
-    api.listCategories().then((res) => setCategory(res.data.find((c) => c.id === categoryId) || null));
-  }, [categoryId]);
-
-  useEffect(() => {
     setPosts(null);
     const timer = setTimeout(() => {
-      api.listPosts({ categoryId, q: query.trim() }).then((res) => {
+      api.listPosts({ categoryId, q: query.trim() }, 'CategoryPage').then((res) => {
         setPosts(res.data);
         setNextCursor(res.nextCursor);
       });
@@ -32,7 +30,7 @@ export default function CategoryPage() {
   async function loadMore() {
     setLoadingMore(true);
     try {
-      const res = await api.listPosts({ categoryId, q: query.trim(), cursor: nextCursor });
+      const res = await api.listPosts({ categoryId, q: query.trim(), cursor: nextCursor }, 'CategoryPage');
       setPosts((prev) => [...prev, ...res.data]);
       setNextCursor(res.nextCursor);
     } finally {
