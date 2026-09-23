@@ -313,6 +313,14 @@ export default function App() {
           }
         />
         <Route
+          path="/posts/:postId/edit"
+          element={
+            <RequireAuth>
+              <CreateEditPost />
+            </RequireAuth>
+          }
+        />
+        <Route
           path="/posts/:postId"
           element={
             <RequireAuth>

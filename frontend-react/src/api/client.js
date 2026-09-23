@@ -30,7 +30,15 @@ async function performRequest(path, { method, body }) {
 
   if (!res.ok) {
     const payload = await res.json().catch(() => ({}));
-    throw new Error(payload.error || `Request failed: ${res.status}`);
+    // Validation failures (400s) include a per-field `details` array (see
+    // ApiError.java) that the generic `error` string alone doesn't convey --
+    // surface it so users see e.g. "postType must not be blank" instead of
+    // just "Invalid request payload".
+    const detail = Array.isArray(payload.details) && payload.details.length > 0
+      ? payload.details.map((d) => `${d.field}: ${d.message}`).join('; ')
+      : null;
+    const message = payload.error || `Request failed: ${res.status}`;
+    throw new Error(detail ? `${message} (${detail})` : message);
   }
 
   return res.status === 204 ? null : res.json();

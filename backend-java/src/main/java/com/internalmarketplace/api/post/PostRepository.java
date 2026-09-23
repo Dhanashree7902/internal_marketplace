@@ -36,14 +36,8 @@ public class PostRepository {
     }
 
     public PagedResult listPosts(String categoryId, String status, String cursor, List<String> searchTerms) {
-        Query query = collection().whereEqualTo("status", status);
-        if (categoryId != null && !categoryId.isBlank()) {
-            query = query.whereEqualTo("category_id", categoryId);
-        }
-        if (!searchTerms.isEmpty()) {
-            query = query.whereArrayContainsAny("search_keywords", searchTerms);
-        }
-        query = query.orderBy("created_at", Query.Direction.DESCENDING);
+        Query query = buildFilteredQuery(categoryId, status, searchTerms, null)
+                .orderBy("created_at", Query.Direction.DESCENDING);
 
         if (cursor != null && !cursor.isBlank()) {
             DocumentSnapshot cursorDoc = FirestoreSupport.await(collection().document(cursor).get());
@@ -57,6 +51,51 @@ public class PostRepository {
         List<PostResponse> items = docs.stream().map(PostResponse::fromSnapshot).toList();
         String nextCursor = docs.size() == PAGE_SIZE ? docs.get(docs.size() - 1).getId() : null;
         return new PagedResult(items, nextCursor);
+    }
+
+    /**
+     * Page-number analogue of {@link #listPosts}: instead of a cursor, takes a
+     * 1-indexed page and page size and returns that exact page plus the total
+     * matching count (via a Firestore count aggregation, which counts
+     * server-side without reading every matching document). {@code page} is
+     * already validated (>= 1) by the caller.
+     *
+     * Firestore's {@code offset()} still costs one read per skipped document
+     * server-side, so this scales worse than cursor pagination for very deep
+     * pages -- acceptable here since it's what page-number UI (jump to page
+     * N, show total pages) actually requires, and this app's post volumes
+     * are small. If posts ever need to support very large datasets with deep
+     * paging, cursor pagination (already used by CategoryPage) is the better
+     * fit and this method's offset() call is the one thing to revisit.
+     */
+    public PageResult listPostsPage(String categoryId, String status, List<String> searchTerms, String userId,
+                                     int page, int size, boolean ascending) {
+        Query filtered = buildFilteredQuery(categoryId, status, searchTerms, userId);
+
+        long totalElements = FirestoreSupport.await(filtered.count().get()).getCount();
+
+        Query.Direction direction = ascending ? Query.Direction.ASCENDING : Query.Direction.DESCENDING;
+        Query sorted = filtered.orderBy("created_at", direction);
+
+        int offset = (page - 1) * size;
+        QuerySnapshot snap = FirestoreSupport.await(sorted.offset(offset).limit(size).get());
+        List<PostResponse> items = snap.getDocuments().stream().map(PostResponse::fromSnapshot).toList();
+
+        return new PageResult(items, page, size, totalElements);
+    }
+
+    private Query buildFilteredQuery(String categoryId, String status, List<String> searchTerms, String userId) {
+        Query query = collection().whereEqualTo("status", status);
+        if (categoryId != null && !categoryId.isBlank()) {
+            query = query.whereEqualTo("category_id", categoryId);
+        }
+        if (userId != null && !userId.isBlank()) {
+            query = query.whereEqualTo("user_id", userId);
+        }
+        if (!searchTerms.isEmpty()) {
+            query = query.whereArrayContainsAny("search_keywords", searchTerms);
+        }
+        return query;
     }
 
     public Optional<PostResponse> findById(String id) {
@@ -123,5 +162,8 @@ public class PostRepository {
     }
 
     public record PagedResult(List<PostResponse> items, String nextCursor) {
+    }
+
+    public record PageResult(List<PostResponse> items, int page, int size, long totalElements) {
     }
 }

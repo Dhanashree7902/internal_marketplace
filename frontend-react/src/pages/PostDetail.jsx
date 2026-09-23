@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
 import { useCategories } from '../context/CategoriesContext.jsx';
 import { Badge, Button, Card, formatDate, Panel, Textarea, Spinner, Modal, Field, Input } from '../components/ui.jsx';
 import {
@@ -15,11 +16,14 @@ import {
   Share2,
   Check,
   AlertTriangle,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 
 export default function PostDetail() {
   const { postId } = useParams();
   const navigate = useNavigate();
+  const { profile, isAdmin } = useAuth();
   const { categories } = useCategories();
   const [post, setPost] = useState(null);
   const [comments, setComments] = useState([]);
@@ -30,6 +34,7 @@ export default function PostDetail() {
   const [reporting, setReporting] = useState(false);
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     api.getPost(postId).then((res) => setPost(res.data));
@@ -37,6 +42,28 @@ export default function PostDetail() {
   }, [postId]);
 
   const category = categories?.find((c) => c.id === post?.category_id);
+  const isOwner = Boolean(post && profile && post.user_id === profile.uid);
+  const canEdit = isAdmin || isOwner;
+  // Owners can only self-service delete once a post is closed/archived (see
+  // PostService#deletePost); admins can delete any post at any time for
+  // moderation, so their button isn't gated on status.
+  const canDelete = isAdmin || (isOwner && (post?.status === 'CLOSED' || post?.status === 'ARCHIVED'));
+
+  async function handleDelete() {
+    if (!window.confirm('Delete this post permanently? This cannot be undone.')) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      await api.deletePost(postId);
+      navigate('/');
+    } catch (err) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to delete post.' });
+      setTimeout(() => setFeedback(null), 4000);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   async function submitComment(e) {
     e.preventDefault();
@@ -131,13 +158,27 @@ export default function PostDetail() {
               )}
             </div>
 
-            <button
-              onClick={handleShare}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
-            >
-              {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Share2 className="h-3.5 w-3.5" />}
-              <span>{copied ? 'Link Copied!' : 'Share Listing'}</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {canEdit && (
+                <Link to={`/posts/${postId}/edit`}>
+                  <Button variant="secondary" size="sm" icon={Pencil}>
+                    Edit
+                  </Button>
+                </Link>
+              )}
+              {canDelete && (
+                <Button variant="danger" size="sm" icon={Trash2} onClick={handleDelete} loading={deleting}>
+                  Delete
+                </Button>
+              )}
+              <button
+                onClick={handleShare}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Share2 className="h-3.5 w-3.5" />}
+                <span>{copied ? 'Link Copied!' : 'Share Listing'}</span>
+              </button>
+            </div>
           </div>
 
           <h1 className="mt-4 text-2xl font-extrabold text-slate-900 sm:text-3xl tracking-tight">

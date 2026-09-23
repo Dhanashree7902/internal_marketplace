@@ -27,12 +27,23 @@ public class PostController {
     private final PostService postService;
 
     // GET /api/v1/posts
+    // Two pagination modes, chosen by which params are present: passing `page`
+    // switches to page-number pagination (Home, My Posts); omitting it keeps
+    // the original cursor-based mode (CategoryPage's "Load More").
     @GetMapping
     public PagedResponse<PostResponse> listPosts(
             @RequestParam(required = false) String categoryId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String cursor,
-            @RequestParam(required = false) String q) {
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size,
+            @RequestParam(required = false) String sortDir,
+            @RequestParam(defaultValue = "false") boolean mine,
+            @CurrentUser FirebaseUserPrincipal user) {
+        if (page != null) {
+            return postService.listPostsPaged(categoryId, status, q, mine, user.uid(), page, size, sortDir);
+        }
         return postService.listPosts(categoryId, status, cursor, q);
     }
 
@@ -50,18 +61,18 @@ public class PostController {
         return ResponseEntity.status(HttpStatus.CREATED).body(new IdResponse(id));
     }
 
-    // PATCH /api/v1/posts/{id}
+    // PATCH /api/v1/posts/{id} -- owner, or an admin moderating any post
     @PatchMapping("/{id}")
     public ResponseEntity<Void> updatePost(@PathVariable String id, @Valid @RequestBody UpdatePostRequest body,
                                             @CurrentUser FirebaseUserPrincipal user) {
-        postService.updatePostAsOwner(id, user.uid(), body);
+        postService.updatePost(id, user, body);
         return ResponseEntity.noContent().build();
     }
 
-    // DELETE /api/v1/posts/{id}
+    // DELETE /api/v1/posts/{id} -- owner, or an admin moderating any post
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deletePost(@PathVariable String id, @CurrentUser FirebaseUserPrincipal user) {
-        postService.deletePostAsOwner(id, user.uid());
+        postService.deletePost(id, user);
         return ResponseEntity.noContent().build();
     }
 

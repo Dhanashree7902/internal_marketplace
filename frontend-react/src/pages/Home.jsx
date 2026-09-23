@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useCategories } from '../context/CategoriesContext.jsx';
-import { Badge, Button, Card, EmptyState, formatDate, PageHeader, Panel, SectionHeading, SkeletonCard } from '../components/ui.jsx';
+import { Badge, Button, Card, EmptyState, ErrorState, formatDate, PageHeader, Pagination, Panel, SectionHeading, SkeletonCard } from '../components/ui.jsx';
 import { SearchBar } from '../components/SearchBar.jsx';
 import {
   Sparkles,
@@ -30,6 +30,8 @@ function getCategoryIcon(index) {
   return CATEGORY_ICONS[index % CATEGORY_ICONS.length] || Box;
 }
 
+const POSTS_PAGE_SIZE = 9;
+
 const CATEGORY_GRADIENTS = [
   'from-indigo-500 to-indigo-600',
   'from-violet-500 to-purple-600',
@@ -48,39 +50,69 @@ function gradientFor(id) {
 export default function Home() {
   const { categories } = useCategories();
   const [posts, setPosts] = useState(null);
-  const [nextCursor, setNextCursor] = useState(null);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [postsError, setPostsError] = useState(null);
+  const [pageLoading, setPageLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(0);
+  const [hasNext, setHasNext] = useState(false);
+  const [hasPrevious, setHasPrevious] = useState(false);
+  const [retryToken, setRetryToken] = useState(0);
   const [query, setQuery] = useState('');
   const [postTypeFilter, setPostTypeFilter] = useState('ALL');
   const [selectedCategory, setSelectedCategory] = useState('');
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
 
+  // Server-side page-number pagination: the effect always fetches whatever
+  // `page` currently is. Any filter change must reset `page` to 1 in the same
+  // event handler that changes the filter (see updateQuery/selectCategory
+  // below) rather than in a separate effect -- otherwise this effect would
+  // fire once for the filter change (with the stale page) and again when the
+  // page-reset commits, firing two requests for one user action.
   useEffect(() => {
-    setPosts(null);
+    setPageLoading(true);
+    setPostsError(null);
     const timer = setTimeout(() => {
-      const params = { q: query.trim() };
+      const params = { q: query.trim(), page, size: POSTS_PAGE_SIZE };
       if (postTypeFilter !== 'ALL') params.postType = postTypeFilter;
       if (selectedCategory) params.categoryId = selectedCategory;
-      api.listPosts(params, 'Home').then((res) => {
-        setPosts(res.data);
-        setNextCursor(res.nextCursor);
-      });
+      api
+        .listPosts(params, 'Home')
+        .then((res) => {
+          setPosts(res.data);
+          setTotalPages(res.totalPages || 0);
+          setHasNext(Boolean(res.hasNext));
+          setHasPrevious(Boolean(res.hasPrevious));
+        })
+        .catch((err) => {
+          setPosts([]);
+          setPostsError(err.message || 'Failed to load posts.');
+        })
+        .finally(() => setPageLoading(false));
     }, 300);
     return () => clearTimeout(timer);
-  }, [query, postTypeFilter, selectedCategory]);
+  }, [query, postTypeFilter, selectedCategory, page, retryToken]);
 
-  async function loadMore() {
-    setLoadingMore(true);
-    try {
-      const params = { q: query.trim(), cursor: nextCursor };
-      if (postTypeFilter !== 'ALL') params.postType = postTypeFilter;
-      if (selectedCategory) params.categoryId = selectedCategory;
-      const res = await api.listPosts(params, 'Home');
-      setPosts((prev) => [...prev, ...res.data]);
-      setNextCursor(res.nextCursor);
-    } finally {
-      setLoadingMore(false);
-    }
+  function updateQuery(value) {
+    setQuery(value);
+    setPage(1);
+  }
+
+  function selectCategory(id) {
+    setSelectedCategory(id);
+    setPage(1);
+  }
+
+  function selectPostType(type) {
+    setPostTypeFilter(type);
+    setPage(1);
+  }
+
+  function goToPreviousPage() {
+    if (hasPrevious) setPage((p) => Math.max(1, p - 1));
+  }
+
+  function goToNextPage() {
+    if (hasNext) setPage((p) => p + 1);
   }
 
   const categoryName = (id) => categories?.find((c) => c.id === id)?.name;
@@ -133,7 +165,7 @@ export default function Home() {
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => setSelectedCategory('')}
+                onClick={() => selectCategory('')}
                 className="text-xs"
               >
                 Show All Categories
@@ -158,7 +190,7 @@ export default function Home() {
               return (
                 <button
                   key={c.id}
-                  onClick={() => setSelectedCategory(isSelected ? '' : c.id)}
+                  onClick={() => selectCategory(isSelected ? '' : c.id)}
                   className={`group text-left relative overflow-hidden rounded-2xl p-4 transition-all duration-200 cursor-pointer ${
                     isSelected
                       ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 scale-[1.02]'
@@ -201,14 +233,14 @@ export default function Home() {
       <section className="space-y-4">
         <div className="flex flex-col gap-4 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="flex-1 sm:max-w-md">
-            <SearchBar value={query} onChange={setQuery} placeholder="Search posts by title or description..." />
+            <SearchBar value={query} onChange={updateQuery} placeholder="Search posts by title or description..." />
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
             {/* Post Type Segmented Control */}
             <div className="flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
               <button
-                onClick={() => setPostTypeFilter('ALL')}
+                onClick={() => selectPostType('ALL')}
                 className={`rounded-lg px-3 py-1.5 transition-all cursor-pointer ${
                   postTypeFilter === 'ALL' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-600 hover:text-slate-900'
                 }`}
@@ -242,7 +274,12 @@ export default function Home() {
         </div>
 
         {/* Posts Content */}
-        {posts === null ? (
+        {postsError ? (
+          <ErrorState
+            description={postsError}
+            onRetry={() => setRetryToken((t) => t + 1)}
+          />
+        ) : posts === null ? (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
             {[1, 2, 3, 4, 5, 6].map((i) => (
               <SkeletonCard key={i} />
@@ -348,12 +385,16 @@ export default function Home() {
           </Panel>
         )}
 
-        {nextCursor && (
-          <div className="mt-8 flex justify-center">
-            <Button variant="secondary" onClick={loadMore} loading={loadingMore}>
-              Load More Posts
-            </Button>
-          </div>
+        {!postsError && (
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            hasPrevious={hasPrevious}
+            hasNext={hasNext}
+            onPrevious={goToPreviousPage}
+            onNext={goToNextPage}
+            loading={pageLoading}
+          />
         )}
       </section>
     </div>

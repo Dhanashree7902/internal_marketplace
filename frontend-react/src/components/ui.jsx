@@ -6,13 +6,20 @@ import {
   CheckCircle2,
   XCircle,
   AlertCircle,
+  AlertTriangle,
   FolderPlus,
   Loader2,
+  ChevronLeft,
   ChevronRight,
   TrendingUp,
   Layers,
   Inbox,
   X,
+  Wrench,
+  Calendar,
+  Search,
+  Car,
+  Home,
 } from 'lucide-react';
 
 const VARIANT_CLASSES = {
@@ -138,8 +145,21 @@ const BADGE_CONFIG = {
   ARCHIVED: { bg: 'bg-slate-100 text-slate-500 ring-slate-500/20', icon: Layers },
   PENDING: { bg: 'bg-amber-50 text-amber-700 ring-amber-600/20', icon: AlertCircle },
   APPROVED: { bg: 'bg-emerald-50 text-emerald-700 ring-emerald-600/20', icon: CheckCircle2 },
+  // Legacy listing types from before the category-based dropdown -- kept so
+  // posts created before that change still render with the styling they've
+  // always had.
   SELL: { bg: 'bg-emerald-100/80 text-emerald-800 ring-emerald-600/20', icon: Tag },
   RENT: { bg: 'bg-sky-100/80 text-sky-800 ring-sky-600/20', icon: Clock },
+  // Listing type categories (Create Post's dropdown). A custom "Other" value
+  // the user typed in falls through to DEFAULT below, since it can't be
+  // predicted ahead of time.
+  Sell: { bg: 'bg-emerald-100/80 text-emerald-800 ring-emerald-600/20', icon: Tag },
+  Rentals: { bg: 'bg-sky-100/80 text-sky-800 ring-sky-600/20', icon: Clock },
+  Services: { bg: 'bg-violet-100/80 text-violet-800 ring-violet-600/20', icon: Wrench },
+  Events: { bg: 'bg-amber-100/80 text-amber-800 ring-amber-600/20', icon: Calendar },
+  'Lost & Found': { bg: 'bg-rose-100/80 text-rose-800 ring-rose-600/20', icon: Search },
+  Carpooling: { bg: 'bg-teal-100/80 text-teal-800 ring-teal-600/20', icon: Car },
+  Housing: { bg: 'bg-orange-100/80 text-orange-800 ring-orange-600/20', icon: Home },
   DEFAULT: { bg: 'bg-indigo-50 text-indigo-700 ring-indigo-600/20', icon: Sparkles },
 };
 
@@ -288,6 +308,55 @@ export function SkeletonList() {
           <div className="h-6 w-16 rounded-full bg-slate-200" />
         </div>
       ))}
+    </div>
+  );
+}
+
+export function ErrorState({ title = 'Something went wrong', description, onRetry }) {
+  return (
+    <Card className="flex flex-col items-center justify-center px-6 py-16 text-center">
+      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-rose-50 text-rose-600 ring-8 ring-rose-50/50">
+        <AlertTriangle className="h-7 w-7" />
+      </div>
+      <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+      {description && <p className="mt-1.5 max-w-sm text-sm text-slate-500">{description}</p>}
+      {onRetry && (
+        <div className="mt-5">
+          <Button variant="secondary" size="sm" onClick={onRetry}>
+            Try Again
+          </Button>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// Page-number pagination controls (Previous / current page indicator / Next).
+// Always visible once there's at least one page of results -- including a
+// single page, where Previous/Next just render disabled -- so the controls
+// are a stable, discoverable part of the layout rather than something that
+// only appears once a list happens to be long enough. Renders nothing only
+// when there are zero pages (no results at all; the empty state elsewhere
+// already covers that case).
+export function Pagination({ page, totalPages, hasPrevious, hasNext, onPrevious, onNext, loading = false }) {
+  if (!totalPages || totalPages < 1) return null;
+  return (
+    <div className="mt-8 flex items-center justify-center gap-4">
+      <Button
+        variant="secondary"
+        size="sm"
+        icon={ChevronLeft}
+        onClick={onPrevious}
+        disabled={!hasPrevious || loading}
+      >
+        Previous
+      </Button>
+      <span className="text-sm font-medium text-slate-600">
+        Page {page} of {totalPages}
+      </span>
+      <Button variant="secondary" size="sm" icon={ChevronRight} onClick={onNext} disabled={!hasNext || loading}>
+        Next
+      </Button>
     </div>
   );
 }

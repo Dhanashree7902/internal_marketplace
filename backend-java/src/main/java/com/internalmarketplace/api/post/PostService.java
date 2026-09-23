@@ -3,6 +3,8 @@ package com.internalmarketplace.api.post;
 import com.google.cloud.firestore.FieldValue;
 import com.internalmarketplace.api.category.CategoryRepository;
 import com.internalmarketplace.api.category.dto.CategoryResponse;
+import com.internalmarketplace.api.common.exception.BadRequestException;
+import com.internalmarketplace.api.common.exception.ConflictException;
 import com.internalmarketplace.api.common.exception.ForbiddenException;
 import com.internalmarketplace.api.common.exception.NotFoundException;
 import com.internalmarketplace.api.common.exception.UnprocessableEntityException;
@@ -12,6 +14,7 @@ import com.internalmarketplace.api.post.dto.CreatePostRequest;
 import com.internalmarketplace.api.post.dto.PostImageResponse;
 import com.internalmarketplace.api.post.dto.PostResponse;
 import com.internalmarketplace.api.post.dto.UpdatePostRequest;
+import com.internalmarketplace.api.security.FirebaseUserPrincipal;
 import com.internalmarketplace.api.user.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -29,6 +32,8 @@ import java.util.Set;
 public class PostService {
 
     private static final List<String> ALLOWED_IMAGE_TYPES = List.of("image/jpeg", "image/png", "image/webp");
+    private static final int DEFAULT_PAGE_SIZE = 10;
+    private static final int MAX_PAGE_SIZE = 50;
 
     private final PostRepository postRepository;
     private final CategoryRepository categoryRepository;
@@ -42,13 +47,54 @@ public class PostService {
                 : SearchKeywords.normalizeSearchQuery(query);
 
         PostRepository.PagedResult result = postRepository.listPosts(categoryId, effectiveStatus, cursor, searchTerms);
-        List<PostResponse> withAuthors = withAuthors(result.items());
-        List<PostResponse> withImageUrls = withAuthors.stream()
+        List<PostResponse> withImageUrls = withImageUrls(withAuthors(result.items()));
+        return PagedResponse.cursor(withImageUrls, result.nextCursor());
+    }
+
+    // Page-number pagination for Home ("all posts") and My Posts ("mine=true" +
+    // a specific status tab) -- see PostRepository#listPostsPage for why this
+    // uses offset() rather than a cursor.
+    public PagedResponse<PostResponse> listPostsPaged(String categoryId, String status, String query, boolean mine,
+                                                        String currentUserId, Integer page, Integer size,
+                                                        String sortDir) {
+        int effectivePage = page == null ? 1 : page;
+        int effectiveSize = size == null ? DEFAULT_PAGE_SIZE : size;
+        if (effectivePage < 1) {
+            throw new BadRequestException("page must be >= 1");
+        }
+        if (effectiveSize < 1 || effectiveSize > MAX_PAGE_SIZE) {
+            throw new BadRequestException("size must be between 1 and " + MAX_PAGE_SIZE);
+        }
+        boolean ascending = resolveAscending(sortDir);
+
+        String effectiveStatus = (status == null || status.isBlank()) ? "ACTIVE" : status;
+        List<String> searchTerms = (query == null || query.isBlank())
+                ? List.of()
+                : SearchKeywords.normalizeSearchQuery(query);
+        String userId = mine ? currentUserId : null;
+
+        PostRepository.PageResult result = postRepository.listPostsPage(
+                categoryId, effectiveStatus, searchTerms, userId, effectivePage, effectiveSize, ascending);
+        List<PostResponse> withImageUrls = withImageUrls(withAuthors(result.items()));
+        return PagedResponse.page(withImageUrls, result.page(), result.size(), result.totalElements());
+    }
+
+    private static boolean resolveAscending(String sortDir) {
+        if (sortDir == null || sortDir.isBlank() || "desc".equalsIgnoreCase(sortDir)) {
+            return false;
+        }
+        if ("asc".equalsIgnoreCase(sortDir)) {
+            return true;
+        }
+        throw new BadRequestException("sortDir must be 'asc' or 'desc'");
+    }
+
+    private List<PostResponse> withImageUrls(List<PostResponse> posts) {
+        return posts.stream()
                 .map(post -> post.coverImageKey() != null
                         ? post.withImageUrl(storageService.signedReadUrl(post.coverImageKey()))
                         : post)
                 .toList();
-        return new PagedResponse<>(withImageUrls, result.nextCursor());
     }
 
     public PostResponse getPost(String id) {
@@ -91,7 +137,7 @@ public class PostService {
         data.put("user_id", userId);
         data.put("title", request.title());
         data.put("description", request.description());
-        data.put("post_type", request.postType().name());
+        data.put("post_type", request.postType());
         data.put("price", request.price());
         data.put("tags", request.tags());
         data.put("expiry_date", request.expiryDate());
@@ -103,8 +149,10 @@ public class PostService {
         return postRepository.create(data);
     }
 
-    public void updatePostAsOwner(String id, String userId, UpdatePostRequest patch) {
-        PostResponse existing = requireOwnedPost(id, userId, "You can only edit your own posts");
+    // Admins may edit any post for moderation/policy purposes; everyone else
+    // only their own.
+    public void updatePost(String id, FirebaseUserPrincipal user, UpdatePostRequest patch) {
+        PostResponse existing = requireEditAccess(id, user, "You can only edit your own posts");
 
         Map<String, Object> update = new LinkedHashMap<>();
         if (patch.title() != null) {
@@ -131,8 +179,15 @@ public class PostService {
         postRepository.update(id, update);
     }
 
-    public void deletePostAsOwner(String id, String userId) {
-        requireOwnedPost(id, userId, "You can only delete your own posts");
+    // Admins may delete any post regardless of status, for moderation/policy
+    // enforcement. A non-admin owner is still restricted to closed/archived
+    // posts only (their own self-service cleanup, not full moderation power).
+    public void deletePost(String id, FirebaseUserPrincipal user) {
+        PostResponse post = requireEditAccess(id, user, "You can only delete your own posts");
+        boolean deletable = user.isAdmin() || "CLOSED".equals(post.status()) || "ARCHIVED".equals(post.status());
+        if (!deletable) {
+            throw new ConflictException("Only closed or archived posts can be deleted");
+        }
         postRepository.updateStatus(id, "REMOVED");
     }
 
@@ -160,6 +215,17 @@ public class PostService {
     private PostResponse requireOwnedPost(String id, String userId, String forbiddenMessage) {
         PostResponse post = postRepository.findById(id).orElseThrow(() -> new NotFoundException("Post not found"));
         if (!userId.equals(post.userId())) {
+            throw new ForbiddenException(forbiddenMessage);
+        }
+        return post;
+    }
+
+    // Same ownership check as requireOwnedPost, but admins bypass it -- used by
+    // update/delete, which are the two operations admins need moderation
+    // access to. Image upload still goes through the owner-only check above.
+    private PostResponse requireEditAccess(String id, FirebaseUserPrincipal user, String forbiddenMessage) {
+        PostResponse post = postRepository.findById(id).orElseThrow(() -> new NotFoundException("Post not found"));
+        if (!user.isAdmin() && !user.uid().equals(post.userId())) {
             throw new ForbiddenException(forbiddenMessage);
         }
         return post;

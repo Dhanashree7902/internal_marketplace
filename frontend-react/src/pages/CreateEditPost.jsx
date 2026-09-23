@@ -1,25 +1,89 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
 import { useCategories } from '../context/CategoriesContext.jsx';
-import { Badge, Button, Card, Field, Input, PageHeader, Panel, Select, Textarea } from '../components/ui.jsx';
-import { PlusCircle, Sparkles, Tag, DollarSign, Eye, AlertCircle } from 'lucide-react';
+import { Badge, Button, Card, ErrorState, Field, Input, PageHeader, Select, Spinner, Textarea } from '../components/ui.jsx';
+import { PlusCircle, Save, Eye, AlertCircle } from 'lucide-react';
 
-const POST_TYPES = [
-  { key: 'SELL', label: 'Sell Item', desc: 'Sell equipment or items to colleagues' },
-  { key: 'RENT', label: 'Rent Out', desc: 'Lend or rent equipment temporarily' },
+const LISTING_TYPES = [
+  'SELL',
+  'BUY_REQUEST',
+  'RENT',
+  'OFFER',
+  'REQUEST',
+  'INFORMATION',
+  'Other',
 ];
+
+const EMPTY_FORM = {
+  categoryId: '',
+  title: '',
+  description: '',
+  // Deriving the default from the list itself, rather than a separately
+  // hardcoded literal, is what actually prevents the recurring bug where
+  // editing LISTING_TYPES leaves this default pointing at a value that no
+  // longer exists in the dropdown.
+  postType: LISTING_TYPES[0],
+  customPostType: '',
+  price: '',
+};
 
 export default function CreateEditPost() {
   const navigate = useNavigate();
+  const { postId } = useParams();
+  const isEditMode = Boolean(postId);
+  const { profile, isAdmin } = useAuth();
   const { categories } = useCategories();
-  const [form, setForm] = useState({ categoryId: '', title: '', description: '', postType: 'SELL', price: '' });
+
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [loadedPost, setLoadedPost] = useState(null);
+  const [loadingPost, setLoadingPost] = useState(isEditMode);
+  const [loadError, setLoadError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
+
+  useEffect(() => {
+    if (!isEditMode) return;
+    api
+      .getPost(postId)
+      .then((res) => setLoadedPost(res.data))
+      .catch((err) => setLoadError(err.message || 'Failed to load this post.'))
+      .finally(() => setLoadingPost(false));
+  }, [postId, isEditMode]);
+
+  useEffect(() => {
+    if (!loadedPost) return;
+    setForm({
+      categoryId: loadedPost.category_id,
+      title: loadedPost.title,
+      description: loadedPost.description,
+      postType: loadedPost.post_type,
+      customPostType: '',
+      price: loadedPost.price != null ? String(loadedPost.price) : '',
+    });
+  }, [loadedPost]);
+
+  // Only decided once both the post and the viewer's own profile are loaded --
+  // profile can still be null for a moment after auth resolves (AuthContext's
+  // api.me() is a separate async call), and treating that as "not the owner"
+  // would flash an incorrect access-denied screen for the real owner.
+  const accessDenied =
+    isEditMode && loadedPost && profile && !isAdmin && loadedPost.user_id !== profile.uid;
+
+  const isOtherType = !isEditMode && form.postType === 'Other';
+  // The value actually saved: either the chosen category, or -- when "Other"
+  // is picked -- whatever custom listing type the user typed in its place.
+  const resolvedPostType = isOtherType ? form.customPostType.trim() : form.postType;
 
   async function submit(e) {
     e.preventDefault();
     setError(null);
+
+    if (isOtherType && !resolvedPostType) {
+      setError('Please enter a custom listing type.');
+      return;
+    }
 
     const price = form.price === '' ? undefined : Number(form.price);
     if (price !== undefined && price < 0) {
@@ -29,8 +93,19 @@ export default function CreateEditPost() {
 
     setSubmitting(true);
     try {
-      const { id } = await api.createPost({ ...form, price });
-      navigate(`/posts/${id}`);
+      if (isEditMode) {
+        await api.updatePost(postId, { title: form.title, description: form.description, price });
+        navigate(`/posts/${postId}`);
+      } else {
+        const { id } = await api.createPost({
+          categoryId: form.categoryId,
+          title: form.title,
+          description: form.description,
+          postType: resolvedPostType,
+          price,
+        });
+        navigate(`/posts/${id}`);
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -40,12 +115,31 @@ export default function CreateEditPost() {
 
   const selectedCategoryName = categories?.find((c) => c.id === form.categoryId)?.name || 'Category Name';
 
+  if (loadingPost) return <Spinner />;
+
+  if (loadError) {
+    return <ErrorState title="Couldn't load this post" description={loadError} />;
+  }
+
+  if (accessDenied) {
+    return (
+      <ErrorState
+        title="You don't have permission to edit this post"
+        description="Only the post's owner or an admin can make changes to it."
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Marketplace"
-        title="Create a New Listing"
-        description="Share items, gear, or services with your colleagues across the company."
+        title={isEditMode ? 'Edit Listing' : 'Create a New Listing'}
+        description={
+          isEditMode
+            ? 'Update the title, description, or price of this listing.'
+            : 'Share items, gear, or services with your colleagues across the company.'
+        }
       />
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
@@ -54,46 +148,60 @@ export default function CreateEditPost() {
           <Card className="p-6 sm:p-8">
             <form onSubmit={submit} className="space-y-5">
               {/* Post Type Selector */}
-              <Field label="Listing Type" required>
-                <div className="grid grid-cols-2 gap-3 mt-1">
-                  {POST_TYPES.map((t) => (
-                    <button
-                      key={t.key}
-                      type="button"
-                      onClick={() => setForm({ ...form, postType: t.key })}
-                      className={`flex flex-col p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
-                        form.postType === t.key
-                          ? 'border-indigo-600 bg-indigo-50/60 ring-2 ring-indigo-600/20'
-                          : 'border-slate-200 bg-white hover:border-slate-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-bold text-slate-900">{t.label}</span>
-                        <Badge tone={t.key}>{t.key}</Badge>
-                      </div>
-                      <span className="mt-1 text-xs text-slate-500">{t.desc}</span>
-                    </button>
-                  ))}
-                </div>
-              </Field>
+              {isEditMode ? (
+                <Field label="Listing Type" hint="Can't be changed after creation">
+                  <Input value={form.postType} disabled />
+                </Field>
+              ) : (
+                <Field label="Listing Type" required>
+                  <Select
+                    value={form.postType}
+                    onChange={(e) => setForm({ ...form, postType: e.target.value })}
+                    required
+                  >
+                    {LISTING_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+
+              {isOtherType && (
+                <Field label="Custom Listing Type" hint="Describe this listing type in a few words" required>
+                  <Input
+                    placeholder="e.g. Volunteer Opportunity"
+                    value={form.customPostType}
+                    onChange={(e) => setForm({ ...form, customPostType: e.target.value })}
+                    required
+                  />
+                </Field>
+              )}
 
               {/* Category */}
-              <Field label="Category" required>
-                <Select
-                  value={form.categoryId}
-                  onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
-                  required
-                >
-                  <option value="" disabled>
-                    Select a category
-                  </option>
-                  {(categories || []).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
+              {isEditMode ? (
+                <Field label="Category" hint="Can't be changed after creation">
+                  <Input value={selectedCategoryName} disabled />
+                </Field>
+              ) : (
+                <Field label="Category" required>
+                  <Select
+                    value={form.categoryId}
+                    onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
+                    required
+                  >
+                    <option value="" disabled>
+                      Select a category
                     </option>
-                  ))}
-                </Select>
-              </Field>
+                    {(categories || []).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
 
               {/* Title */}
               <Field label="Title" hint="Be concise and clear" required>
@@ -144,8 +252,8 @@ export default function CreateEditPost() {
                 <Button type="button" variant="secondary" onClick={() => navigate(-1)}>
                   Cancel
                 </Button>
-                <Button type="submit" loading={submitting} icon={PlusCircle}>
-                  Publish Listing
+                <Button type="submit" loading={submitting} icon={isEditMode ? Save : PlusCircle}>
+                  {isEditMode ? 'Save Changes' : 'Publish Listing'}
                 </Button>
               </div>
             </form>
@@ -161,7 +269,9 @@ export default function CreateEditPost() {
 
           <Card className="p-6 relative overflow-hidden bg-gradient-to-br from-white to-slate-50 border-indigo-100 shadow-md">
             <div className="flex items-center justify-between">
-              <Badge tone={form.postType}>{form.postType}</Badge>
+              <Badge tone={isOtherType ? resolvedPostType : form.postType}>
+                {resolvedPostType || 'Other'}
+              </Badge>
               <Badge tone="ACTIVE">ACTIVE</Badge>
             </div>
 

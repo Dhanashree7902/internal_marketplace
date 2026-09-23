@@ -74,7 +74,7 @@ export default function Notifications() {
                   </Button>
                 )}
                 <Button
-                  variant="ghost"
+                  variant="danger"
                   size="sm"
                   icon={Trash2}
                   onClick={() => deleteNotification(n.id)}
